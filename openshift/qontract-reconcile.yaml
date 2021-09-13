@@ -4024,6 +4024,13 @@ objects:
               secretKeyRef:
                 name: ${CLOUDWATCH_SECRET}
                 key: log_group_name
+          - name: APP_INTERFACE_STATE_BUCKET
+            valueFrom:
+              secretKeyRef:
+                name: app-interface
+                key: aws.s3.bucket
+          - name: APP_INTERFACE_STATE_BUCKET_ACCOUNT
+            value: "${APP_INTERFACE_STATE_BUCKET_ACCOUNT}"
           command: ["/bin/sh", "-c"]
           args:
           - |
