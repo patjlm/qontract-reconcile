@@ -2,6 +2,7 @@ import sys
 import testslide
 
 import reconcile.terraform_vpc_peerings as integ
+from reconcile.utils import aws_api
 import reconcile.utils.terraform_client as terraform
 import reconcile.utils.terrascript_client as terrascript
 from reconcile import queries
@@ -12,7 +13,8 @@ class MockOCM:
     @staticmethod
     def get_aws_infrastructure_access_terraform_assume_role(cluster,
                                                             tf_account_id,
-                                                            tf_user):
+                                                            tf_user,
+                                                            cache=False):
         return f"{cluster}/{tf_account_id}/{tf_user}"
 
 
@@ -68,6 +70,9 @@ class TestRun(testslide.TestCase):
     def setUp(self):
         super().setUp()
 
+        self.awsapi = testslide.StrictMock(aws_api.AWSApi)
+        self.mock_constructor(aws_api, 'AWSApi').to_return_value(self.awsapi)
+
         self.build_desired_state_vpc = self.mock_callable(
             integ, 'build_desired_state_vpc')
         self.build_desired_state_all_clusters = self.mock_callable(
@@ -83,8 +88,7 @@ class TestRun(testslide.TestCase):
         self.ocmmap = testslide.StrictMock(ocm.OCMMap)
         self.mock_constructor(ocm, 'OCMMap').to_return_value(self.ocmmap)
         self.mock_callable(queries, 'get_aws_accounts').to_return_value([{
-            "name":
-            "desired_requester_account"
+            "name": "desired_requester_account"
         }])
         self.clusters = self.mock_callable(
             queries, 'get_clusters').to_return_value([

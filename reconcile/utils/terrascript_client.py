@@ -1663,7 +1663,8 @@ class TerrascriptClient:
             cluster = aws_infrastructure_access['cluster']['name']
             ocm = ocm_map.get(cluster)
             role_grants = \
-                ocm.get_aws_infrastructure_access_role_grants(cluster)
+                ocm.get_aws_infrastructure_access_role_grants(cluster,
+                                                              cache=True)
             for user_arn, _, state, switch_role_link in role_grants:
                 # find correct user by identifier
                 user_id = self.get_user_id_from_arn(user_arn)

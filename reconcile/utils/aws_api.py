@@ -5,14 +5,26 @@ import time
 
 from datetime import datetime
 from threading import Lock
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
-import boto3
+from boto3 import Session
 import botocore
+
+from mypy_boto3_ec2 import EC2Client
+from mypy_boto3_ec2.type_defs import (
+    RouteTableTypeDef, SecurityGroupTypeDef, SubnetTypeDef,
+    TransitGatewayTypeDef, TransitGatewayVpcAttachmentTypeDef, VpcTypeDef
+)
 
 from reconcile.utils import threaded
 import reconcile.utils.lean_terraform_client as terraform
 
 from reconcile.utils.secret_reader import SecretReader
+
+
+cache_log = logging.getLogger(f'{__name__}-cache')
+cache_log.setLevel(os.getenv('CACHE_LOG_LEVEL',
+                             logging.getLevelName(logging.ERROR)))
 
 
 class InvalidResourceTypeError(Exception):
@@ -21,6 +33,9 @@ class InvalidResourceTypeError(Exception):
 
 class MissingARNError(Exception):
     pass
+
+
+Account = Dict[str, Any]
 
 
 class AWSApi:
@@ -39,19 +54,29 @@ class AWSApi:
         self.resource_types = \
             ['s3', 'sqs', 'dynamodb', 'rds', 'rds_snapshots']
 
+        # caches
+        self._caches_lock = Lock()
+        self._account_vpcs: Dict[Tuple, List[VpcTypeDef]] = {}
+        self._vpc_route_tables: Dict[str, List[RouteTableTypeDef]] = {}
+        self._vpc_subnets: Dict[str, List[SubnetTypeDef]] = {}
+        self._vpc_default_sg_id: Dict[str, List[SecurityGroupTypeDef]] = {}
+        self._transit_gateways: Dict[Tuple, List[TransitGatewayTypeDef]] = {}
+        self._transit_gateway_vpc_attachments: \
+            Dict[str, List[TransitGatewayVpcAttachmentTypeDef]] = {}
+
         # store the app-interface accounts in a dictionary indexed by name
         self.accounts = {acc['name']: acc for acc in accounts}
 
-    def init_sessions_and_resources(self, accounts):
+    def init_sessions_and_resources(self, accounts: Iterable[Account]):
         results = threaded.run(self.get_tf_secrets, accounts,
                                self.thread_pool_size)
-        self.sessions = {}
-        self.resources = {}
+        self.sessions: Dict[str, Session] = {}
+        self.resources: Dict[str, Any] = {}
         for account, secret in results:
             access_key = secret['aws_access_key_id']
             secret_key = secret['aws_secret_access_key']
             region_name = secret['region']
-            session = boto3.Session(
+            session = Session(
                 aws_access_key_id=access_key,
                 aws_secret_access_key=secret_key,
                 region_name=region_name,
@@ -59,7 +84,7 @@ class AWSApi:
             self.sessions[account] = session
             self.resources[account] = {}
 
-    def get_session(self, account):
+    def get_session(self, account: str) -> Session:
         return self.sessions[account]
 
     def get_tf_secrets(self, account):
@@ -183,7 +208,7 @@ class AWSApi:
                 self.custom_rds_snapshot_filter(account, rds,
                                                 snapshots_without_db)
             self.set_resouces(account, 'rds_snapshots_no_owner',
-                              unfiltered_snapshots)
+                               unfiltered_snapshots)
 
     def map_route53_resources(self):
         for account, s in self.sessions.items():
@@ -608,7 +633,7 @@ class AWSApi:
             ecrs = account['ecrs']
             for ecr in ecrs:
                 region_name = ecr['region']
-                session = boto3.Session(
+                session = Session(
                     aws_access_key_id=access_key,
                     aws_secret_access_key=secret_key,
                     region_name=region_name,
@@ -655,7 +680,7 @@ class AWSApi:
         )
         credentials = response['Credentials']
 
-        assumed_session = boto3.Session(
+        assumed_session = Session(
             aws_access_key_id=credentials['AccessKeyId'],
             aws_secret_access_key=credentials['SecretAccessKey'],
             aws_session_token=credentials['SessionToken'],
@@ -663,6 +688,56 @@ class AWSApi:
         )
 
         return assumed_session
+
+    def get_account_vpcs(self, account: Account, ec2: EC2Client) \
+            -> List[VpcTypeDef]:
+        cache_key = (account['name'],
+                     account['assume_role'],
+                     account['assume_region'],
+                     account['assume_cidr'])
+        with self._caches_lock:
+            if cache_key not in self._account_vpcs:
+                cache_log.info(f"vpc cache MISS {cache_key}")
+                vpcs = ec2.describe_vpcs()
+                self._account_vpcs[cache_key] = vpcs.get('Vpcs', [])
+            else:
+                cache_log.info(f"vpc cache HIT  {cache_key}")
+        return self._account_vpcs[cache_key]
+
+    # filters a list of aws resources according to tags
+    @staticmethod
+    def filter_on_tags(items: Iterable[Any], tags: Mapping[str, str] = {}) \
+            -> List[Any]:
+        res = []
+        for item in items:
+            tags_dict = {t['Key']: t['Value'] for t in item.get('Tags', [])}
+            if all(tags_dict.get(k) == values for k, values in tags.items()):
+                res.append(item)
+        return res
+
+    def get_vpc_route_tables(self, vpc_id: str, ec2: EC2Client) \
+            -> List[RouteTableTypeDef]:
+        with self._caches_lock:
+            if vpc_id not in self._vpc_route_tables:
+                cache_log.info(f"route-table cache MISS {vpc_id}")
+                rts = ec2.describe_route_tables(
+                        Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}])
+                self._vpc_route_tables[vpc_id] = rts.get('RouteTables', [])
+            else:
+                cache_log.info(f"route-table cache HIT {vpc_id}")
+        return self._vpc_route_tables[vpc_id]
+
+    def get_vpc_subnets(self, vpc_id: str, ec2: EC2Client) \
+            -> List[SubnetTypeDef]:
+        with self._caches_lock:
+            if vpc_id not in self._vpc_subnets:
+                cache_log.info(f"subnet cache MISS {vpc_id}")
+                subnets = ec2.describe_subnets(
+                            Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}])
+                self._vpc_subnets[vpc_id] = subnets.get('Subnets', [])
+            else:
+                cache_log.info(f"subnet cache HIT {vpc_id}")
+        return self._vpc_subnets[vpc_id]
 
     def get_cluster_vpc_details(self, account, route_tables=False,
                                 subnets=False):
@@ -681,9 +756,9 @@ class AWSApi:
         """
         assumed_session = self._get_assume_role_session(account)
         assumed_ec2 = assumed_session.client('ec2')
-        vpcs = assumed_ec2.describe_vpcs()
+        vpcs = self.get_account_vpcs(account, assumed_ec2)
         vpc_id = None
-        for vpc in vpcs.get('Vpcs'):
+        for vpc in vpcs:
             if vpc['CidrBlock'] == account['assume_cidr']:
                 vpc_id = vpc['VpcId']
                 break
@@ -692,22 +767,19 @@ class AWSApi:
         subnets_id_az = None
         if vpc_id:
             if route_tables:
-                vpc_route_tables = assumed_ec2.describe_route_tables(
-                    Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
-                )
+                vpc_route_tables = \
+                    self.get_vpc_route_tables(vpc_id, assumed_ec2)
                 route_table_ids = [rt['RouteTableId']
-                                   for rt in vpc_route_tables['RouteTables']]
+                                   for rt in vpc_route_tables]
             if subnets:
-                vpc_subnets = assumed_ec2.describe_subnets(
-                    Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
-                )
+                vpc_subnets = self.get_vpc_subnets(vpc_id, assumed_ec2)
                 subnets_id_az = \
                     [
                         {
                             'id': s['SubnetId'],
                             'az': s['AvailabilityZone']
                         }
-                        for s in vpc_subnets['Subnets']
+                        for s in vpc_subnets
                     ]
 
         return vpc_id, route_table_ids, subnets_id_az
@@ -730,23 +802,17 @@ class AWSApi:
         regions = [r['RegionName'] for r in ec2.describe_regions()['Regions']]
         for region_name in regions:
             ec2 = session.client('ec2', region_name=region_name)
-            vpcs = ec2.describe_vpcs(
-                Filters=[
-                    {'Name': f'tag:{k}', 'Values': [v]}
-                    for k, v in tags.items()
-                ]
-            )
-            for vpc in vpcs.get('Vpcs'):
+            vpcs = self.get_account_vpcs(account, ec2)
+            vpcs = self.filter_on_tags(vpcs, tags)
+            for vpc in vpcs:
                 vpc_id = vpc['VpcId']
                 cidr_block = vpc['CidrBlock']
                 route_table_ids = None
                 if route_tables:
-                    vpc_route_tables = ec2.describe_route_tables(
-                        Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
-                    )
+                    vpc_route_tables = self.get_vpc_route_tables(vpc_id, ec2)
                     route_table_ids = [rt['RouteTableId']
                                        for rt
-                                       in vpc_route_tables['RouteTables']]
+                                       in vpc_route_tables]
                 item = {
                     'vpc_id': vpc_id,
                     'region': region_name,
@@ -757,39 +823,50 @@ class AWSApi:
 
         return results
 
-    @staticmethod
-    def get_vpc_default_sg_id(ec2, vpc_id):
-        vpc_security_groups = ec2.describe_security_groups(
-            Filters=[
-                {
-                    'Name': 'vpc-id',
-                    'Values': [vpc_id]
-                },
-                {
-                    'Name': 'group-name',
-                    'Values': ['default']
-                }]
-            )
-        # there is only one default
-        for sg in vpc_security_groups.get('SecurityGroups'):
-            return sg['GroupId']
+    def get_vpc_default_sg_id(self, vpc_id: str, ec2: EC2Client) \
+            -> Optional[str]:
+        with self._caches_lock:
+            if vpc_id not in self._vpc_default_sg_id:
+                cache_log.info(f"default sg-id cache MISS {vpc_id}")
+                sgs = ec2.describe_security_groups(
+                        Filters=[
+                            {'Name': 'vpc-id', 'Values': [vpc_id]},
+                            {'Name': 'group-name', 'Values': ['default']}
+                        ])
+                self._vpc_default_sg_id[vpc_id] = sgs.get('SecurityGroups', [])
+            else:
+                cache_log.info(f"default sg-id cache HIT {vpc_id}")
 
+        # there is only one default
+        for sg in self._vpc_default_sg_id[vpc_id]:
+            return sg['GroupId']
         return None
 
-    @staticmethod
-    def get_tgw_default_route_table_id(ec2, tgw_id, tags):
+    def get_transit_gateways(self, account: Account, ec2: EC2Client) \
+            -> List[TransitGatewayTypeDef]:
+        cache_key = (account['name'],
+                     account['assume_role'],
+                     account['assume_region'],
+                     account['assume_cidr'],
+                     ec2.meta.region_name)
+        with self._caches_lock:
+            if cache_key not in self._transit_gateways:
+                cache_log.info(f"tgw cache MISS {cache_key}")
+                tgws = ec2.describe_transit_gateways()
+                self._transit_gateways[cache_key] = tgws.get('TransitGateways',
+                                                             [])
+            else:
+                cache_log.info(f"tgw cache HIT {cache_key}")
+        return self._transit_gateways[cache_key]
+
+    def get_tgw_default_route_table_id(self, ec2: EC2Client, account: Account,
+                                       tgw_id: str, tags: Mapping[str, str]) \
+            -> Optional[str]:
+        tgws = self.get_transit_gateways(account, ec2)
+        tgws = self.filter_on_tags(tgws, tags)
         # we know the party TGW exists, so we can be
         # a little less catious about getting it
-        tgw = ec2.describe_transit_gateways(
-            TransitGatewayIds=[tgw_id],
-            Filters=[
-                {
-                    'Name': f'tag:{k}',
-                    'Values': [v]
-                }
-                for k, v in tags.items()
-            ]
-        )['TransitGateways'][0]
+        [tgw] = [t for t in tgws if t['TransitGatewayId'] == tgw_id]
         tgw_options = tgw['Options']
         tgw_has_route_table = \
             tgw_options['DefaultRouteTableAssociation'] == 'enable'
@@ -799,6 +876,23 @@ class AWSApi:
             return tgw_options['AssociationDefaultRouteTableId']
 
         return None
+
+    def get_transit_gateway_vpc_attachments(
+            self, tgw_id: str, ec2: EC2Client) \
+            -> List[TransitGatewayVpcAttachmentTypeDef]:
+        with self._caches_lock:
+            if tgw_id not in self._transit_gateway_vpc_attachments:
+                cache_log.info(f"tgw vpc attachements cache MISS {tgw_id}")
+                atts = ec2.describe_transit_gateway_vpc_attachments(
+                        Filters=[
+                            {'Name': 'transit-gateway-id', 'Values': [tgw_id]}
+                        ])
+                self._transit_gateway_vpc_attachments[tgw_id] = \
+                    atts.get('TransitGatewayVpcAttachments', [])
+            else:
+                cache_log.info(f"tgw vpc attachements cache HIT {tgw_id}")
+
+        return self._transit_gateway_vpc_attachments[tgw_id]
 
     def get_tgws_details(self, account, region_name, routes_cidr_block,
                          tags=None, route_tables=False,
@@ -874,7 +968,7 @@ class AWSApi:
                                     party_region != region_name:
                                 party_tgw_route_table_id = \
                                     self.get_tgw_default_route_table_id(
-                                        party_ec2, party_tgw_id, tags)
+                                        party_ec2, account, party_tgw_id, tags)
                                 if party_tgw_route_table_id is not None:
                                     # that's it, we have all
                                     # the information we need
@@ -903,21 +997,16 @@ class AWSApi:
                         # - vpc id
                         # - vpc region
                         if security_groups:
-                            vpc_attachments = party_ec2.\
-                                describe_transit_gateway_vpc_attachments(
-                                    Filters=[
-                                        {'Name': 'transit-gateway-id',
-                                         'Values': [party_tgw_id]}
-                                    ]
-                                )
-                            for va in vpc_attachments.get(
-                                    'TransitGatewayVpcAttachments'):
+                            vpc_attachments = \
+                                self.get_transit_gateway_vpc_attachments(
+                                    party_tgw_id, party_ec2)
+                            for va in vpc_attachments:
                                 vpc_attachment_vpc_id = va['VpcId']
                                 vpc_attachment_state = va['State']
                                 if vpc_attachment_state != 'available':
                                     continue
                                 sg_id = self.get_vpc_default_sg_id(
-                                    party_ec2, vpc_attachment_vpc_id)
+                                    vpc_attachment_vpc_id, party_ec2)
                                 if sg_id is not None:
                                     # that's it, we have all
                                     # the information we need

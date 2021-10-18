@@ -1,5 +1,6 @@
 import logging
 import re
+from threading import Lock
 import requests
 
 from sretoolbox.utils import retry
@@ -56,6 +57,8 @@ class OCM:
         self._init_access_token()
         self._init_request_headers()
         self._init_clusters(init_provision_shards=init_provision_shards)
+        self._aws_infra_access_role_grants_cache_lock = Lock()
+        self._aws_infra_access_role_grants_cache = {}
         if init_addons:
             self._init_addons()
         self._init_blocked_versions(blocked_versions)
@@ -310,7 +313,20 @@ class OCM:
               f'groups/{group_id}/users/{user_id}'
         self._delete(api)
 
-    def get_aws_infrastructure_access_role_grants(self, cluster):
+    def _aws_infra_access_role_grants(self, cluster, cache=False):
+        with self._aws_infra_access_role_grants_cache_lock:
+            if not cache or \
+               cluster not in self._aws_infra_access_role_grants_cache:
+                cluster_id = self.cluster_ids.get(cluster)
+                if not cluster_id:
+                    return []
+                api = f'{CS_API_BASE}/v1/clusters/{cluster_id}/' + \
+                    'aws_infrastructure_access_role_grants'
+                self._aws_infra_access_role_grants_cache[cluster] = \
+                    self._get_json(api).get('items', [])
+        return self._aws_infra_access_role_grants_cache[cluster]
+
+    def get_aws_infrastructure_access_role_grants(self, cluster, cache=False):
         """Returns a list of AWS users (ARN, access level)
         who have AWS infrastructure access in a cluster.
 
@@ -318,22 +334,15 @@ class OCM:
 
         :type cluster: string
         """
-        cluster_id = self.cluster_ids.get(cluster)
-        if not cluster_id:
-            return []
-        api = f'{CS_API_BASE}/v1/clusters/{cluster_id}/' + \
-              'aws_infrastructure_access_role_grants'
-        role_grants = self._get_json(api).get('items', [])
+        role_grants = self._aws_infra_access_role_grants(cluster, cache=cache)
         return [(r['user_arn'], r['role']['id'], r['state'], r['console_url'])
                 for r in role_grants]
 
     def get_aws_infrastructure_access_terraform_assume_role(self, cluster,
                                                             tf_account_id,
-                                                            tf_user):
-        cluster_id = self.cluster_ids[cluster]
-        api = f'{CS_API_BASE}/v1/clusters/{cluster_id}/' + \
-              'aws_infrastructure_access_role_grants'
-        role_grants = self._get_json(api).get('items', [])
+                                                            tf_user,
+                                                            cache=False):
+        role_grants = self._aws_infra_access_role_grants(cluster, cache=cache)
         user_arn = f"arn:aws:iam::{tf_account_id}:user/{tf_user}"
         for rg in role_grants:
             if rg['user_arn'] != user_arn:
