@@ -143,12 +143,12 @@ class AWSApi:
             if 'Buckets' not in buckets_list:
                 continue
             buckets = [b['Name'] for b in buckets_list['Buckets']]
-            self.set_resouces(account, 's3', buckets)
+            self.set_resources(account, 's3', buckets)
             buckets_without_owner = \
                 self.get_resources_without_owner(account, buckets)
             unfiltered_buckets = \
                 self.custom_s3_filter(account, s3, buckets_without_owner)
-            self.set_resouces(account, 's3_no_owner', unfiltered_buckets)
+            self.set_resources(account, 's3_no_owner', unfiltered_buckets)
 
     def map_sqs_resources(self):
         for account, s in self.sessions.items():
@@ -157,18 +157,18 @@ class AWSApi:
             if 'QueueUrls' not in queues_list:
                 continue
             queues = queues_list['QueueUrls']
-            self.set_resouces(account, 'sqs', queues)
+            self.set_resources(account, 'sqs', queues)
             queues_without_owner = \
                 self.get_resources_without_owner(account, queues)
             unfiltered_queues = \
                 self.custom_sqs_filter(account, sqs, queues_without_owner)
-            self.set_resouces(account, 'sqs_no_owner', unfiltered_queues)
+            self.set_resources(account, 'sqs_no_owner', unfiltered_queues)
 
     def map_dynamodb_resources(self):
         for account, s in self.sessions.items():
             dynamodb = s.client('dynamodb')
             tables = self.paginate(dynamodb, 'list_tables', 'TableNames')
-            self.set_resouces(account, 'dynamodb', tables)
+            self.set_resources(account, 'dynamodb', tables)
             tables_without_owner = \
                 self.get_resources_without_owner(account, tables)
             unfiltered_tables = \
@@ -178,7 +178,7 @@ class AWSApi:
                     dynamodb,
                     tables_without_owner
                 )
-            self.set_resouces(account, 'dynamodb_no_owner', unfiltered_tables)
+            self.set_resources(account, 'dynamodb_no_owner', unfiltered_tables)
 
     def map_rds_resources(self):
         for account, s in self.sessions.items():
@@ -186,12 +186,12 @@ class AWSApi:
             results = \
                 self.paginate(rds, 'describe_db_instances', 'DBInstances')
             instances = [t['DBInstanceIdentifier'] for t in results]
-            self.set_resouces(account, 'rds', instances)
+            self.set_resources(account, 'rds', instances)
             instances_without_owner = \
                 self.get_resources_without_owner(account, instances)
             unfiltered_instances = \
                 self.custom_rds_filter(account, rds, instances_without_owner)
-            self.set_resouces(account, 'rds_no_owner', unfiltered_instances)
+            self.set_resources(account, 'rds_no_owner', unfiltered_instances)
 
     def map_rds_snapshots(self):
         self.wait_for_resource('rds')
@@ -200,14 +200,14 @@ class AWSApi:
             results = \
                 self.paginate(rds, 'describe_db_snapshots', 'DBSnapshots')
             snapshots = [t['DBSnapshotIdentifier'] for t in results]
-            self.set_resouces(account, 'rds_snapshots', snapshots)
+            self.set_resources(account, 'rds_snapshots', snapshots)
             snapshots_without_db = [t['DBSnapshotIdentifier'] for t in results
                                     if t['DBInstanceIdentifier'] not in
                                     self.resources[account]['rds']]
             unfiltered_snapshots = \
                 self.custom_rds_snapshot_filter(account, rds,
                                                 snapshots_without_db)
-            self.set_resouces(account, 'rds_snapshots_no_owner',
+            self.set_resources(account, 'rds_snapshots_no_owner',
                                unfiltered_snapshots)
 
     def map_route53_resources(self):
@@ -222,7 +222,7 @@ class AWSApi:
                                           'ResourceRecordSets',
                                           {'HostedZoneId': zone['Id']})
                 zone['records'] = results
-            self.set_resouces(account, 'route53', zones)
+            self.set_resources(account, 'route53', zones)
 
     def map_ecr_resources(self):
         for account, s in self.sessions.items():
@@ -230,7 +230,7 @@ class AWSApi:
             repositories = self.paginate(client=client,
                                          method='describe_repositories',
                                          key='repositories')
-            self.set_resouces(account, 'ecr', repositories)
+            self.set_resources(account, 'ecr', repositories)
 
     @staticmethod
     def paginate(client, method, key, params={}):
@@ -255,7 +255,7 @@ class AWSApi:
             if wait:
                 time.sleep(2)
 
-    def set_resouces(self, account, key, value):
+    def set_resources(self, account, key, value):
         with self._lock:
             self.resources[account][key] = value
 
