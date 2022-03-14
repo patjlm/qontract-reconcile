@@ -473,6 +473,7 @@ CLUSTERS_QUERY = """
       schedule
       conditions {
         soakDays
+        locks
       }
     }
     additionalRouters {

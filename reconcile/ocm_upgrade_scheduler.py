@@ -3,6 +3,7 @@ import logging
 import copy
 
 from datetime import datetime
+from typing import Dict, Iterable
 from dateutil import parser
 from croniter import croniter
 
@@ -167,6 +168,11 @@ def version_conditions_met(version, history, ocm_name, workloads, upgrade_condit
     return conditions_met
 
 
+def cluster_locks(policy: Dict) -> Iterable[str]:
+    """List all locks for the given cluster"""
+    return (policy.get("conditions") or {}).get("locks") or []
+
+
 def calculate_diff(current_state, desired_state, ocm_map, version_history):
     """Check available upgrades for each cluster in the desired state
     according to upgrade conditions
@@ -181,6 +187,13 @@ def calculate_diff(current_state, desired_state, ocm_map, version_history):
         list: upgrade policies to be applied
     """
     diffs = []
+
+    # all clusters with a current upgradePolicy are considered locked
+    locked = {}
+    for policy in desired_state:
+        if policy["cluster"] in [s["cluster"] for s in current_state]:
+            for lock in cluster_locks(policy):
+                locked[lock] = policy["cluster"]
 
     now = datetime.utcnow()
     for d in desired_state:
@@ -222,6 +235,13 @@ def calculate_diff(current_state, desired_state, ocm_map, version_history):
             logging.debug(f"[{cluster}] skipping cluster with no upcoming upgrade")
             continue
 
+        if any(lock in locked for lock in cluster_locks(d)):
+            locking = {
+                lock: locked[lock] for lock in cluster_locks(d) if lock in locked
+            }
+            logging.debug(f"[{cluster}] skipping cluster: locked out by {locking}")
+            continue
+
         # choose version that meets the conditions and add it to the diffs
         available_upgrades = ocm.get_available_upgrades(
             d["current_version"], d["channel"]
@@ -242,6 +262,8 @@ def calculate_diff(current_state, desired_state, ocm_map, version_history):
                     "schedule_type": "manual",
                     "next_run": next_schedule.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 }
+                for lock in cluster_locks(d):
+                    locked[lock] = cluster
                 diffs.append(item)
                 break
 
