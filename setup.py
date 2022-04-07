@@ -1,8 +1,10 @@
 from setuptools import find_packages, setup
 
+from version import version, git_version
+
 setup(
     name="qontract-reconcile",
-    version="0.5.1",
+    version=version(git_version()),
     license="Apache License 2.0",
 
     author="Red Hat App-SRE Team",
