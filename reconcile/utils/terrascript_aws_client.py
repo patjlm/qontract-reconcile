@@ -859,6 +859,10 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
             req_peer_owner_id = requester.get("peer_owner_id")
             if req_peer_owner_id:
                 values["peer_owner_id"] = req_peer_owner_id
+            if accepter.get("allow_remote_vpc_dns_resolution"):
+                values["accepter"] = {"allow_remote_vpc_dns_resolution": True}
+            if requester.get("allow_remote_vpc_dns_resolution"):
+                values["requester"] = {"allow_remote_vpc_dns_resolution": True}
             tf_resource = aws_vpc_peering_connection(identifier, **values)
             self.add_resource(req_account_name, tf_resource)
 

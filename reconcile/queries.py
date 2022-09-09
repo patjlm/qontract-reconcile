@@ -998,6 +998,7 @@ CLUSTER_PEERING_QUERY = """
           assumeRole
         }
         ... on ClusterPeeringConnectionClusterRequester_v1 {
+          remoteVpcDnsResolution
           cluster {
             name
             network {
@@ -1030,6 +1031,7 @@ CLUSTER_PEERING_QUERY = """
                 manageRoutes
                 ... on ClusterPeeringConnectionClusterAccepter_v1 {
                   name
+                  remoteVpcDnsResolution
                   cluster {
                     name
                   }

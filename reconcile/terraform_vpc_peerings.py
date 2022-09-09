@@ -151,6 +151,7 @@ def build_desired_state_single_cluster(
         peer_cluster = peer_connection["cluster"]
         peer_cluster_name = peer_cluster["name"]
         requester_manage_routes = peer_connection.get("manageRoutes")
+        requester_remote_vpc_dns_resolution = peer_connection.get("remoteVpcDnsResolution") or False
         # Ensure we have a matching peering connection
         peer_info = find_matching_peering(
             cluster_info, peer_cluster, "cluster-vpc-accepter"
@@ -163,6 +164,7 @@ def build_desired_state_single_cluster(
             )
 
         accepter_manage_routes = peer_info.get("manageRoutes")
+        accepter_remote_vpc_dns_resolution = peer_info.get("remoteVpcDnsResolution") or False
 
         req_aws, acc_aws = aws_assume_roles_for_cluster_vpc_peering(
             cluster_info, peer_info, peer_cluster, ocm
@@ -197,6 +199,7 @@ def build_desired_state_single_cluster(
             "vpc_id": requester_vpc_id,
             "route_table_ids": requester_route_table_ids,
             "account": req_aws,
+            "allow_remote_vpc_dns_resolution": requester_remote_vpc_dns_resolution,
         }
 
         accepter_vpc_id, accepter_route_table_ids, _ = awsapi.get_cluster_vpc_details(
@@ -214,6 +217,7 @@ def build_desired_state_single_cluster(
             "vpc_id": accepter_vpc_id,
             "route_table_ids": accepter_route_table_ids,
             "account": acc_aws,
+            "allow_remote_vpc_dns_resolution": accepter_remote_vpc_dns_resolution,
         }
 
         item = {
