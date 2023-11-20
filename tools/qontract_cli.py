@@ -2640,18 +2640,6 @@ def alert_to_receiver(
         print("|".join([al["alertname"], str(result)]))
 
 
-def scan_promotion_group(start: str, group_id: int, group: set[str], publishers: dict[str, list[str]], subscribers: dict[str, list[str]], others: dict[int, set[str]]) -> int:
-    for other_id, other in others.items():
-        if start in other:
-            other.update(group)
-            return other_id
-    for channel, pubs in publishers.items():
-        if start in pubs:
-            for sub in subscribers.get(channel, []):
-                group.add(sub)
-                group_id = scan_promotion_group(sub, group_id, group, publishers, subscribers, others)
-    return group_id
-
 @root.command()
 @click.pass_context
 def saas_promotions(ctx) -> None:
@@ -2664,50 +2652,47 @@ def saas_promotions(ctx) -> None:
 
     def target_info(t: SaasResourceTemplateTarget) -> str:
         # return f"{sf.name}/{rt.name}/{t.name}@{t.namespace.cluster.name}/{t.namespace.name}"
-        return f'''{sf.name}/{rt.name}/{t.name}/{t.namespace.cluster.name}/{t.namespace.name}("{sf.name}/{rt.name}/{t.name}<br/>on {t.namespace.cluster.name}/{t.namespace.name}")'''
+        return f'''{sf.name}/{rt.name}/{t.name}/{t.namespace.cluster.name}/{t.namespace.name}(\\"{sf.name}/{rt.name}/{t.name}<br/>on {t.namespace.cluster.name}/{t.namespace.name}\\")'''
 
     publishers: dict[str, list[str]] = {}
     subscribers: dict[str, list[str]] = {}
-    targets: set[str] = set()
+    sf_targets: dict[str, set[str]] = {}
     for sf in saas_files:
         for rt in sf.resource_templates:
             for t in rt.targets:
                 promotion = t.promotion
                 if promotion is not None:
                     name = target_info(t)
-                    targets.add(name)
+                    sf_targets.setdefault(sf.name, set()).add(name)
                     for p in promotion.publish or []:
-                        publishers.setdefault(p, []).append(name)
+                        publishers.setdefault(name, []).append(p)
                     for s in promotion.subscribe or []:
                         subscribers.setdefault(s, []).append(name)
 
-    promotion_groups: dict[int, set[str]] = {}
-    id = 0
-    for start in targets:
-        if start.startswith("saas-gabi"):
-            continue
-        id += 1
-        group: set[str] = set()
-        group_id = scan_promotion_group(start, id, group, publishers, subscribers, promotion_groups)
-        if group_id == id:
-            promotion_groups[group_id] = group
+    def get_links(pub: str, links: list[str]) -> None:
+        for channel in publishers.get(pub, []):
+            for sub in subscribers.get(channel, []):
+                link = f"  {pub} --> {sub};"
+                if link not in links:
+                    links.append(link)
+                    get_links(sub, links)
 
-    for group in promotion_groups.values():
+    sf_links: dict[str, list[str]] = {}
+    for sf_name, targets in sf_targets.items():
         links: list[str] = []
-        for target in group:
-            for channel, pubs in publishers.items():
-                if target in pubs:
-                    for subscriber in subscribers.get(channel, []):
-                        # links.append(f"  {target} --{channel}--> {subscriber};")
-                        links.append(f"  {target} --> {subscriber};")
+        for target in targets:
+            if any([target in subs for subs in subscribers.values()]):
+                continue
+            get_links(target, links)
         if not links:
             continue
-        print("```mermaid")
-        print("graph LR;")
-        for l in links:
-            print(l)
-        print("```")
-        print("")
+        sf_links[sf_name] = links
+
+    from jinja2 import Template
+    with open("saas-promotions-dashboard-template.json.j2") as file_:
+        template = Template(file_.read())
+    outputText = template.render(sf_links=sf_links)
+    print(outputText)
 
 
 @root.command()

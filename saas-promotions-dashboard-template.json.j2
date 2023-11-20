@@ -1,0 +1,159 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "target": {
+          "limit": 100,
+          "matchAny": false,
+          "tags": [],
+          "type": "dashboard"
+        },
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 42,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+{% for sf_name in sf_links %}
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 8,
+      "panels": [
+        {
+            "fieldConfig": {
+                "defaults": {
+                "custom": {
+                    "valueName": "last"
+                },
+                "mappings": [],
+                "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                    {
+                        "color": "green",
+                        "value": null
+                    },
+                    {
+                        "color": "red",
+                        "value": 80
+                    }
+                    ]
+                }
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 23,
+                "w": 24,
+                "x": 0,
+                "y": 1
+            },
+            "id": {{loop.index}},
+            "options": {
+                "authPassword": "",
+                "authUsername": "",
+                "composites": [],
+                "content": "graph LR\n{% for link in sf_links[sf_name] %}{{link}}\n{% endfor %}",
+                "legend": {
+                "asTable": true,
+                "displayMode": "table",
+                "gradient": {
+                    "enabled": true,
+                    "show": true
+                },
+                "hideEmpty": false,
+                "hideZero": false,
+                "placement": "bottom",
+                "show": true,
+                "sortBy": "last",
+                "sortDesc": true,
+                "stats": [
+                    "mean",
+                    "last",
+                    "min",
+                    "max",
+                    "sum"
+                ]
+                },
+                "maxWidth": true,
+                "mermaidServiceUrl": "",
+                "mermaidThemeVariablesDark": {
+                "classDiagram": {},
+                "common": {
+                    "fontFamily": "Roboto,Helvetica Neue,Arial,sans-serif"
+                },
+                "flowChart": {},
+                "sequenceDiagram": {},
+                "stateDiagram": {},
+                "userJourneyDiagram": {}
+                },
+                "mermaidThemeVariablesLight": {
+                "classDiagram": {},
+                "common": {
+                    "fontFamily": "Roboto,Helvetica Neue,Arial,sans-serif"
+                },
+                "flowChart": {},
+                "sequenceDiagram": {},
+                "stateDiagram": {},
+                "userJourneyDiagram": {}
+                },
+                "metricCharacterReplacements": [],
+                "moddedSeriesVal": 0,
+                "mode": "content",
+                "nodeSize": {
+                "minHeight": 40,
+                "minWidth": 30
+                },
+                "pluginVersion": "",
+                "style": "",
+                "useBackground": false,
+                "useBasicAuth": false,
+                "valueName": "last"
+            },
+            "pluginVersion": "1.7.3",
+            "title": "{{sf_name}}",
+            "type": "jdbranham-diagram-panel"
+        }
+      ],
+      "title": "SaaS file {{sf_name}}",
+      "type": "row"
+    }{{ ", " if not loop.last else "" }}
+{%- endfor %}
+  ],
+  "schemaVersion": 37,
+  "style": "dark",
+  "tags": [],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "mermaid test",
+  "uid": "cYowHQSIk",
+  "version": 2,
+  "weekStart": ""
+}
