@@ -2640,6 +2640,76 @@ def alert_to_receiver(
         print("|".join([al["alertname"], str(result)]))
 
 
+def scan_promotion_group(start: str, group_id: int, group: set[str], publishers: dict[str, list[str]], subscribers: dict[str, list[str]], others: dict[int, set[str]]) -> int:
+    for other_id, other in others.items():
+        if start in other:
+            other.update(group)
+            return other_id
+    for channel, pubs in publishers.items():
+        if start in pubs:
+            for sub in subscribers.get(channel, []):
+                group.add(sub)
+                group_id = scan_promotion_group(sub, group_id, group, publishers, subscribers, others)
+    return group_id
+
+@root.command()
+@click.pass_context
+def saas_promotions(ctx) -> None:
+    saas_files = get_saas_files()
+    if not saas_files:
+        print("no saas files found")
+        sys.exit(1)
+
+    from reconcile.typed_queries.saas_files import SaasResourceTemplateTarget
+
+    def target_info(t: SaasResourceTemplateTarget) -> str:
+        # return f"{sf.name}/{rt.name}/{t.name}@{t.namespace.cluster.name}/{t.namespace.name}"
+        return f'''{sf.name}/{rt.name}/{t.name}/{t.namespace.cluster.name}/{t.namespace.name}("{sf.name}/{rt.name}/{t.name}<br/>on {t.namespace.cluster.name}/{t.namespace.name}")'''
+
+    publishers: dict[str, list[str]] = {}
+    subscribers: dict[str, list[str]] = {}
+    targets: set[str] = set()
+    for sf in saas_files:
+        for rt in sf.resource_templates:
+            for t in rt.targets:
+                promotion = t.promotion
+                if promotion is not None:
+                    name = target_info(t)
+                    targets.add(name)
+                    for p in promotion.publish or []:
+                        publishers.setdefault(p, []).append(name)
+                    for s in promotion.subscribe or []:
+                        subscribers.setdefault(s, []).append(name)
+
+    promotion_groups: dict[int, set[str]] = {}
+    id = 0
+    for start in targets:
+        if start.startswith("saas-gabi"):
+            continue
+        id += 1
+        group: set[str] = set()
+        group_id = scan_promotion_group(start, id, group, publishers, subscribers, promotion_groups)
+        if group_id == id:
+            promotion_groups[group_id] = group
+
+    for group in promotion_groups.values():
+        links: list[str] = []
+        for target in group:
+            for channel, pubs in publishers.items():
+                if target in pubs:
+                    for subscriber in subscribers.get(channel, []):
+                        # links.append(f"  {target} --{channel}--> {subscriber};")
+                        links.append(f"  {target} --> {subscriber};")
+        if not links:
+            continue
+        print("```mermaid")
+        print("graph LR;")
+        for l in links:
+            print(l)
+        print("```")
+        print("")
+
+
 @root.command()
 @click.option("--app-name", default=None, help="app to act on.")
 @click.option("--saas-file-name", default=None, help="saas-file to act on.")
