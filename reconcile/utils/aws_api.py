@@ -798,14 +798,18 @@ class AWSApi:  # pylint: disable=too-many-public-methods
     def _get_account_assume_data(account: awsh.Account) -> tuple[str, str, str]:
         """
         returns mandatory data to be able to assume a role with this account:
-        (account_name, assume_role, assume_region)
+        (account_name, assume_role(may be empty), assume_region)
         """
-        required_keys = ["name", "assume_role", "assume_region"]
+        required_keys = ["name", "assume_region"]
         ok = all(elem in account.keys() for elem in required_keys)
         if not ok:
             account_name = account.get("name")
             raise KeyError("[{}] account is missing required keys".format(account_name))
-        return (account["name"], account["assume_role"], account["assume_region"])
+        return (
+            account["name"],
+            account.get("assume_role") or "",
+            account["assume_region"],
+        )
 
     @staticmethod
     # pylint: disable=method-hidden
